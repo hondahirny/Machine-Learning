@@ -1,0 +1,158 @@
+---
+title: "Machine Learning Project"
+author: "Marcin Hirny"
+date: "March 27, 2016"
+output: html_document
+---
+
+## Introduction
+In this machine learning exercise, I've attempted to predict the quality of an exercise being performed by a human being.  This analysis is based on data gathered by *Ugulino et al*.  Please see the works cited section in this document for a full reference to this work.
+
+The subjects of this study were asked to perform weight lifting exercises correctly, as monitored by an expert observer.  These instances were marked as having a "classe" variable of "A." The same subjects were also asked to perform the exercises incorrectly, as assigned classe variables "B" through "E."  Data for these exercises were summarized into tabular form, as described below:
+
+```{r, echo = FALSE, cache = TRUE}
+setwd("C:/Users/Marcin/Documents/Machine Learning/Class Project")
+
+download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv","train.csv")
+download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv","test.csv")
+
+
+finalquiz <- read.csv("test.csv")
+train_orig <- read.csv("train.csv")
+```
+
+```{r, cache = TRUE}
+dim(train_orig) # Display number of rows and columns of original data set.
+```
+
+## Data Processing
+### Data Set Creation
+The original training data set was further subdivided into training and test sets using a ratio of 0.6 train to test.  Columns contining NA's were removed in order to reduce commputational workload on the machine training algorithm and to focus on data that is available throughout the data set.  
+
+```{r, cache = TRUE, message=FALSE}
+# Identify NAs
+    
+    library(caret) # Caret package is needed for the "createDataPartition" function.
+
+    nalist <- !is.na(train_orig[1,])
+    train_no_na <- train_orig[,nalist]
+    final <- finalquiz[,nalist]
+
+# Create train and test sets without NAs
+    
+    inTrain <- createDataPartition(y = train_no_na$classe, p = 0.6, list = FALSE)
+    train <- train_no_na[inTrain,]
+    test <- train_no_na[-inTrain,]
+    
+    dim(train) #Display number of rows and columns for data set with NAs removed.
+```  
+  
+### Identifying Near Zero Variables
+Removing NAs resulted in taking the original data set from 160 to 93 columns of data.  Removing variables with minimal useful information was performed next:
+  
+```{r, cache = TRUE, message = FALSE}
+# Identify variables with low variability.  
+    library(caret)
+    nzero <- nearZeroVar(train,freqCut = 5, uniqueCut = 5 , saveMetrics = FALSE)
+    
+# Create clean data for the machine learning algorithm.    
+    trainclean <- train[,-nzero]
+    testclean <- test[,-nzero]
+    final <- final[,-nzero]
+
+    dim(trainclean) #Display number of rows and columns for data set with NAs and low variability data removed.
+```
+
+Removing near zero variables further reduced the column count from 93 to 59.
+
+### Data Exploration
+
+The remaining data set was further explored for variables which won't likely contribute to the machine learning algorithm:
+
+```{r, cache = TRUE}
+names(trainclean)
+```
+
+Variables 1-6 appeared related to date/time or individual user information.  As the model is expected to work with any user (or any time of day!) these variables were ingored in the machine learning.
+
+The following is an example of the *magnet_dumbell_z* variable and its distribution, organized by classe:
+
+```{r, message=FALSE}
+library(ggplot2)
+qplot(trainclean[,45],color=trainclean$classe,geom="density",xlab = names(trainclean[45]),main = "Example Data Distribution")    
+```
+
+### 1st Model Attempt: Recursive Partitioning
+The model attempts to categorize an exercise, based on various inputs.  An appropriate model to start with would be a decision tree.  The first attempt was using "rpart" within the caret package:
+ 
+```{r, cache = TRUE, message=FALSE} 
+# Ensure use of cross-validation during analysis
+    tc <- trainControl(method = "cv")
+    
+# Reproducible prediction model using rpart.
+    set.seed(123456)
+    trainmodel2 <- train(classe~.,data = trainclean[,7:59], method = "rpart",trControl = tc)
+    predtest2 <- predict(trainmodel2,newdata = trainclean)
+```
+
+This model created poor accuracy and was abandoned:   
+
+```{r, cache = TRUE, echo=FALSE}
+    library(caret)
+    confusionMatrix(predtest2,trainclean$classe)
+```
+  
+### 2nd Model Attempt: Random Forest
+Random forest was chosen on the 2nd attempt at creating a model.  An initial attempt was made without cross-validation in order to minimize compute time.  Its accuracy was >99%, which incates a great model candidate.  Further processing, with cross-validation, produced the following result:  
+  
+```{r, cache = TRUE, message=FALSE, warning = FALSE} 
+# Adjust "trainControl" to ensure use of 5-fold cross-validation.
+    
+    tc2 <- trainControl(method = "cv", number = 5, verboseIter = FALSE)
+  
+# Create Random Forest model on the training data set
+    set.seed(123456)
+    trainmodel3 <- train(classe~.,data = trainclean[,7:59], method = "parRF",trControl = tc2)
+```  
+  
+#### In-Sample Error Estimate  
+Performing a confusion matrix analysis on the training set produced the following in-sample error:
+
+```{r, cache = TRUE, message=FALSE,echo=FALSE}
+predtrain3 <- predict(trainmodel3,newdata = trainclean)
+confusionMatrix(predtrain3,trainclean$classe)
+```  
+
+#### Out-Of-Sample Error
+Performing the same analysis on the test set produced the following out-of-sample error:
+
+```{r, cache = TRUE, message=FALSE, echo=FALSE}
+predtest3 <- predict(trainmodel3,newdata = testclean)
+confusionMatrix(predtest3,testclean$classe)
+```
+
+As expected, the out-of-sample error rate was slightly higher.   Model accuracy was 100% in-sample, but reduced to 99% for out-of-sample.  
+
+## Final Prediction
+The test set for this project consisted on 20 cases.  The "classe" variable (part of training set) was replaced with "problem_id."  The final prediction is made below:
+
+```{r, cache = TRUE, message=FALSE}
+final_prediction <- as.data.frame(final[,"problem_id"])
+final_prediction <- cbind(final_prediction, predict(trainmodel3,newdata = final))
+names(final_prediction) <- c("Quiz Question","Exercise Quality Prediction")
+
+print(final_prediction)
+```
+
+## Works Cited
+
+Ugulino, W.; Cardador, D.; Vega, K.; Velloso, E.; Milidiu, R.; Fuks, H. Wearable Computing: Accelerometers' Data Classification of Body Postures and Movements. Proceedings of 21st Brazilian Symposium on Artificial Intelligence. Advances in Artificial Intelligence - SBIA 2012. In: Lecture Notes in Computer Science. , pp. 52-61. Curitiba, PR: Springer Berlin / Heidelberg, 2012. ISBN 978-3-642-34458-9. DOI: 10.1007/978-3-642-34459-6_6. 
+
+Read more: http://groupware.les.inf.puc-rio.br/har#sbia_paper_section#ixzz448IPti2P
+
+## Appendix A: Data Exploration Details
+
+```{r}
+head(trainclean, n = 3L)
+
+```
